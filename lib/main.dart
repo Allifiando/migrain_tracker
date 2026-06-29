@@ -1,25 +1,48 @@
 import 'package:flutter/material.dart';
-import 'package:intl/intl.dart'; // Untuk format tanggal
+import 'package:intl/intl.dart';
 
 void main() {
   runApp(const MigraineTrackerApp());
 }
 
-// 1. Model Data untuk menyimpan struktur data Migrain
-class MigraineLog {
+// =========================================================================
+// MODEL DATA (Dibuat saling mewarisi agar bisa masuk ke dalam 1 List yang sama)
+// =========================================================================
+
+abstract class BaseLog {
   final DateTime date;
+  BaseLog({required this.date});
+}
+
+// Model Data untuk mencatat serangan Migrain
+class MigraineLog extends BaseLog {
   final int painScale;
   final String trigger;
   final String note;
 
   MigraineLog({
-    required this.date,
+    required super.date,
     required this.painScale,
     required this.trigger,
     required this.note,
   });
 }
 
+// Model Data untuk mencatat Aksi Minum Obat
+class MedicationActionLog extends BaseLog {
+  final String medicineName;
+  final String effectiveness;
+
+  MedicationActionLog({
+    required super.date,
+    required this.medicineName,
+    required this.effectiveness,
+  });
+}
+
+// =========================================================================
+// APLIKASI UTAMA
+// =========================================================================
 class MigraineTrackerApp extends StatelessWidget {
   const MigraineTrackerApp({super.key});
 
@@ -33,7 +56,9 @@ class MigraineTrackerApp extends StatelessWidget {
   }
 }
 
-// 2. Halaman Navigasi Utama (Bikin Tab di Bawah Aplikasi)
+// =========================================================================
+// 2. NAVIGASI UTAMA (Kembali ke 2 Tab, tapi Fitur Obat dilempar via Pop-up)
+// =========================================================================
 class MainNavigationScreen extends StatefulWidget {
   const MainNavigationScreen({super.key});
 
@@ -44,21 +69,22 @@ class MainNavigationScreen extends StatefulWidget {
 class _MainNavigationScreenState extends State<MainNavigationScreen> {
   int _currentIndex = 0;
 
-  // Ini adalah List global untuk menampung riwayat data migrain kamu
-  final List<MigraineLog> _historyLogs = [];
+  // SATU LIST UNTUK SEMUA: Menampung riwayat sakit DAN riwayat obat sekaligus
+  final List<BaseLog> _unifiedHistoryLogs = [];
+
+  void _addNewLog(BaseLog newLog) {
+    setState(() {
+      _unifiedHistoryLogs.add(newLog);
+      // Diurutkan berdasarkan tanggal terbaru di paling atas
+      _unifiedHistoryLogs.sort((a, b) => b.date.compareTo(a.date));
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
-    // Daftar halaman yang bisa diakses lewat Tab di bawah
     final List<Widget> screens = [
-      MigraineLogScreen(
-        onLogSaved: (newLog) {
-          setState(() {
-            _historyLogs.insert(0, newLog); // Log baru ditaruh di paling atas
-          });
-        },
-      ),
-      MigraineHistoryScreen(logs: _historyLogs),
+      MigraineLogScreen(onLogSaved: _addNewLog, onMedicationSaved: _addNewLog),
+      UnifiedHistoryScreen(logs: _unifiedHistoryLogs),
     ];
 
     return Scaffold(
@@ -66,6 +92,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
       bottomNavigationBar: BottomNavigationBar(
         currentIndex: _currentIndex,
         selectedItemColor: Colors.indigo,
+        unselectedItemColor: Colors.grey,
         onTap: (index) {
           setState(() {
             _currentIndex = index;
@@ -78,7 +105,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
           ),
           BottomNavigationBarItem(
             icon: Icon(Icons.history),
-            label: 'Riwayat Log',
+            label: 'Riwayat Urut',
           ),
         ],
       ),
@@ -86,10 +113,18 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
   }
 }
 
-// 3. HALAMAN INPUT (Sudah dimodifikasi agar melempar data saat di-save)
+// =========================================================================
+// 3. HALAMAN CATAT BARU (Bisa Catat Sakit ATAU Klik Tombol Obat)
+// =========================================================================
 class MigraineLogScreen extends StatefulWidget {
   final Function(MigraineLog) onLogSaved;
-  const MigraineLogScreen({super.key, required this.onLogSaved});
+  final Function(MedicationActionLog) onMedicationSaved;
+
+  const MigraineLogScreen({
+    super.key,
+    required this.onLogSaved,
+    required this.onMedicationSaved,
+  });
 
   @override
   State<MigraineLogScreen> createState() => _MigraineLogScreenState();
@@ -109,8 +144,24 @@ class _MigraineLogScreenState extends State<MigraineLogScreen> {
     'Hormonal/Haid',
   ];
 
+  // Data untuk Form Obat
+  final _formKey = GlobalKey<FormState>();
+  String _selectedMedicine = 'Paracetamol';
+  String _effectiveness = 'Manjur (Sembuh Total)';
+  final List<String> _medicines = [
+    'Paracetamol',
+    'Ibuprofen',
+    'Sumatriptan',
+    'Asam Mefenamat',
+    'Lainnya',
+  ];
+  final List<String> _efficacyOptions = [
+    'Manjur (Sembuh Total)',
+    'Lumayan (Mendingan)',
+    'Tidak Ngefek',
+  ];
+
   void _saveLog() {
-    // Membuat objek log baru berdasarkan input user
     final logBaru = MigraineLog(
       date: DateTime.now(),
       painScale: _painScale.round(),
@@ -118,30 +169,36 @@ class _MigraineLogScreenState extends State<MigraineLogScreen> {
       note: _noteController.text,
     );
 
-    // Kirim data ke List utama
     widget.onLogSaved(logBaru);
 
-    // Reset input setelah simpan
     setState(() {
       _painScale = 5.0;
       _selectedTrigger = 'Kurang Tidur';
       _noteController.clear();
     });
 
-    // Munculkan notifikasi sukses
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Berhasil! 🎉'),
-        content: const Text('Data migrain kamu sudah disimpan ke Riwayat.'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('OK'),
-          ),
-        ],
-      ),
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Log migrain berhasil disimpan! 🧠')),
     );
+  }
+
+  void _submitMedication() {
+    if (_formKey.currentState!.validate()) {
+      final obatBaru = MedicationActionLog(
+        date: DateTime.now(),
+        medicineName: _selectedMedicine,
+        effectiveness: _effectiveness,
+      );
+
+      widget.onMedicationSaved(obatBaru);
+      Navigator.pop(context);
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Aksi minum obat berhasil disisipkan ke riwayat! 💊'),
+        ),
+      );
+    }
   }
 
   @override
@@ -149,16 +206,51 @@ class _MigraineLogScreenState extends State<MigraineLogScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text(
-          'Catat Migrain 🧠',
+          'Catat Tracker Istri 🧠',
           style: TextStyle(color: Colors.white),
         ),
         backgroundColor: Colors.indigo,
+        actions: [
+          // Tombol cepat di pojok kanan atas untuk catat obat kapan saja
+          TextButton.icon(
+            onPressed: () => _openAddActionForm(context),
+            icon: const Icon(Icons.medication, color: Colors.white),
+            label: const Text(
+              'Minum Obat',
+              style: TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ),
+        ],
       ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(16.0),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            // Tombol shortcut besar biar istri gampang klik kalau darurat habis minum obat
+            Card(
+              color: Colors.indigo.shade50,
+              child: ListTile(
+                leading: const Icon(
+                  Icons.medication,
+                  color: Colors.indigo,
+                  size: 32,
+                ),
+                title: const Text(
+                  'Baru saja minum obat?',
+                  style: TextStyle(fontWeight: FontWeight.bold),
+                ),
+                subtitle: const Text(
+                  'Klik di sini untuk langsung mencatat efektivitas obat.',
+                ),
+                trailing: const Icon(Icons.arrow_forward_ios, size: 16),
+                onTap: () => _openAddActionForm(context),
+              ),
+            ),
+            const SizedBox(height: 24),
             const Text(
               'Tingkat Keparahan (Skala 1-10)',
               style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
@@ -173,11 +265,7 @@ class _MigraineLogScreenState extends State<MigraineLogScreen> {
                     max: 10,
                     divisions: 9,
                     label: _painScale.round().toString(),
-                    onChanged: (value) {
-                      setState(() {
-                        _painScale = value;
-                      });
-                    },
+                    onChanged: (value) => setState(() => _painScale = value),
                   ),
                 ),
                 const Text('10'),
@@ -198,17 +286,11 @@ class _MigraineLogScreenState extends State<MigraineLogScreen> {
             DropdownButton<String>(
               value: _selectedTrigger,
               isExpanded: true,
-              items: _triggers.map((String value) {
-                return DropdownMenuItem<String>(
-                  value: value,
-                  child: Text(value),
-                );
-              }).toList(),
-              onChanged: (newValue) {
-                setState(() {
-                  _selectedTrigger = newValue!;
-                });
-              },
+              items: _triggers
+                  .map((val) => DropdownMenuItem(value: val, child: Text(val)))
+                  .toList(),
+              onChanged: (newValue) =>
+                  setState(() => _selectedTrigger = newValue!),
             ),
             const SizedBox(height: 24),
             const Text(
@@ -218,7 +300,7 @@ class _MigraineLogScreenState extends State<MigraineLogScreen> {
             TextField(
               controller: _noteController,
               decoration: const InputDecoration(
-                hintText: 'Contoh: Belum makan siang, obat parasetamol...',
+                hintText: 'Contoh: Belum makan siang, kunang-kunang...',
               ),
             ),
             const SizedBox(height: 32),
@@ -243,19 +325,87 @@ class _MigraineLogScreenState extends State<MigraineLogScreen> {
       ),
     );
   }
+
+  void _openAddActionForm(BuildContext context) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      builder: (context) => Padding(
+        padding: EdgeInsets.only(
+          bottom: MediaQuery.of(context).viewInsets.bottom,
+          top: 24,
+          left: 24,
+          right: 24,
+        ),
+        child: Form(
+          key: _formKey,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Catat Minum Obat 💊',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 16),
+              DropdownButtonFormField<String>(
+                value: _selectedMedicine,
+                decoration: const InputDecoration(labelText: 'Nama Obat'),
+                items: _medicines
+                    .map(
+                      (med) => DropdownMenuItem(value: med, child: Text(med)),
+                    )
+                    .toList(),
+                onChanged: (val) => setState(() => _selectedMedicine = val!),
+              ),
+              const SizedBox(height: 16),
+              DropdownButtonFormField<String>(
+                value: _effectiveness,
+                decoration: const InputDecoration(labelText: 'Kemanjuran Obat'),
+                items: _efficacyOptions
+                    .map(
+                      (eff) => DropdownMenuItem(value: eff, child: Text(eff)),
+                    )
+                    .toList(),
+                onChanged: (val) => setState(() => _effectiveness = val!),
+              ),
+              const SizedBox(height: 24),
+              SizedBox(
+                width: double.infinity,
+                height: 48,
+                child: ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.indigo,
+                  ),
+                  onPressed: _submitMedication,
+                  child: const Text(
+                    'Simpan Catatan Obat',
+                    style: TextStyle(color: Colors.white),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 24),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 }
 
-// 4. HALAMAN BARU: HALAMAN RIWAYAT UNTUK MELIHAT LOG
-class MigraineHistoryScreen extends StatelessWidget {
-  final List<MigraineLog> logs;
-  const MigraineHistoryScreen({super.key, required this.logs});
+// =========================================================================
+// 4. HALAMAN RIWAYAT SATU LINIMASA (TERURUT BERDASARKAN WAKTU)
+// =========================================================================
+class UnifiedHistoryScreen extends StatelessWidget {
+  final List<BaseLog> logs;
+  const UnifiedHistoryScreen({super.key, required this.logs});
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
         title: const Text(
-          'Riwayat Migrain 📂',
+          'Riwayat & Linimasa 📂',
           style: TextStyle(color: Colors.white),
         ),
         backgroundColor: Colors.indigo,
@@ -263,50 +413,113 @@ class MigraineHistoryScreen extends StatelessWidget {
       body: logs.isEmpty
           ? const Center(
               child: Text(
-                'Belum ada riwayat.\nSilakan isi log di tab "Catat Baru".',
+                'Belum ada riwayat apa pun.\nSilakan isi log migrain atau catat minum obat.',
                 textAlign: TextAlign.center,
-                style: const TextStyle(color: Colors.grey, fontSize: 16),
+                style: TextStyle(color: Colors.grey, fontSize: 16),
               ),
             )
           : ListView.builder(
               itemCount: logs.length,
               itemBuilder: (context, index) {
-                final log = logs[index];
-                // Format tanggal jadi lebih gampang dibaca (Jam:Menit - Tgl/Bln/Thn)
+                final currentLog = logs[index];
                 final formattedDate = DateFormat(
                   'HH:mm - dd MMM yyyy',
-                ).format(log.date);
+                ).format(currentLog.date);
 
-                return Card(
-                  margin: const EdgeInsets.all(8.0),
-                  child: ListTile(
-                    leading: CircleAvatar(
-                      backgroundColor: Colors.indigo,
-                      foregroundColor: Colors.white,
-                      child: Text(
-                        '${log.painScale}',
-                      ), // Menampilkan skala nyeri di dalam lingkaran
+                // JIKA LOG ADALAH CATATAN SAKIT MIGRAIN
+                if (currentLog is MigraineLog) {
+                  return Card(
+                    margin: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 6,
                     ),
-                    title: Text(
-                      'Pemicu: ${log.trigger}',
-                      style: const TextStyle(fontWeight: FontWeight.bold),
-                    ),
-                    subtitle: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        if (log.note.isNotEmpty) Text('Catatan: ${log.note}'),
-                        const SizedBox(height: 4),
-                        Text(
-                          formattedDate,
-                          style: const TextStyle(
-                            fontSize: 12,
-                            color: Colors.grey,
+                    borderOnForeground: true,
+                    child: ListTile(
+                      leading: CircleAvatar(
+                        backgroundColor: Colors.red.shade400,
+                        foregroundColor: Colors.white,
+                        child: Text('${currentLog.painScale}'),
+                      ),
+                      title: Text(
+                        'Sakit Kepala (Skala ${currentLog.painScale})',
+                        style: const TextStyle(fontWeight: FontWeight.bold),
+                      ),
+                      subtitle: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text('Pemicu: ${currentLog.trigger}'),
+                          if (currentLog.note.isNotEmpty)
+                            Text('Catatan: ${currentLog.note}'),
+                          const SizedBox(height: 4),
+                          Text(
+                            formattedDate,
+                            style: const TextStyle(
+                              fontSize: 11,
+                              color: Colors.grey,
+                            ),
                           ),
-                        ),
-                      ],
+                        ],
+                      ),
                     ),
-                  ),
-                );
+                  );
+                }
+
+                // JIKA LOG ADALAH CATATAN MINUM OBAT
+                if (currentLog is MedicationActionLog) {
+                  Color statusColor = Colors.grey;
+                  if (currentLog.effectiveness == 'Manjur (Sembuh Total)')
+                    statusColor = Colors.green.shade600;
+                  if (currentLog.effectiveness == 'Lumayan (Mendingan)')
+                    statusColor = Colors.orange.shade600;
+                  if (currentLog.effectiveness == 'Tidak Ngefek')
+                    statusColor = Colors.red.shade600;
+
+                  return Card(
+                    color: Colors
+                        .green
+                        .shade50, // Dibikin beda warna background biar eye-catching
+                    margin: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 6,
+                    ),
+                    child: ListTile(
+                      leading: Icon(
+                        Icons.medication,
+                        color: statusColor,
+                        size: 36,
+                      ),
+                      title: Text(
+                        'Minum: ${currentLog.medicineName}',
+                        style: const TextStyle(
+                          fontWeight: FontWeight.bold,
+                          color: Colors.black87,
+                        ),
+                      ),
+                      subtitle: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Efek: ${currentLog.effectiveness}',
+                            style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              color: statusColor,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            formattedDate,
+                            style: const TextStyle(
+                              fontSize: 11,
+                              color: Colors.grey,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  );
+                }
+
+                return const SizedBox.shrink();
               },
             ),
     );
