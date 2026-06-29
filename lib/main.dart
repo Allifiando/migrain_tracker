@@ -1,20 +1,23 @@
+import 'dart:convert'; // NEW: Untuk mengubah data ke teks (JSON)
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:shared_preferences/shared_preferences.dart'; // NEW: Untuk simpan permanen
 
 void main() {
   runApp(const MigraineTrackerApp());
 }
 
 // =========================================================================
-// MODEL DATA (Dibuat saling mewarisi agar bisa masuk ke dalam 1 List yang sama)
+// MODEL DATA (Ditambah fungsi toMap & fromMap untuk simpan ke HP)
 // =========================================================================
-
 abstract class BaseLog {
   final DateTime date;
-  BaseLog({required this.date});
+  final String type; // 'migraine' atau 'medication'
+  BaseLog({required this.date, required this.type});
+
+  Map<String, dynamic> toMap();
 }
 
-// Model Data untuk mencatat serangan Migrain
 class MigraineLog extends BaseLog {
   final int painScale;
   final String trigger;
@@ -25,10 +28,29 @@ class MigraineLog extends BaseLog {
     required this.painScale,
     required this.trigger,
     required this.note,
-  });
+  }) : super(type: 'migraine');
+
+  @override
+  Map<String, dynamic> toMap() {
+    return {
+      'type': type,
+      'date': date.toIso8601String(),
+      'painScale': painScale,
+      'trigger': trigger,
+      'note': note,
+    };
+  }
+
+  factory MigraineLog.fromMap(Map<String, dynamic> map) {
+    return MigraineLog(
+      date: DateTime.parse(map['date']),
+      painScale: map['painScale'],
+      trigger: map['trigger'],
+      note: map['note'],
+    );
+  }
 }
 
-// Model Data untuk mencatat Aksi Minum Obat
 class MedicationActionLog extends BaseLog {
   final String medicineName;
   final String effectiveness;
@@ -37,11 +59,29 @@ class MedicationActionLog extends BaseLog {
     required super.date,
     required this.medicineName,
     required this.effectiveness,
-  });
+  }) : super(type: 'medication');
+
+  @override
+  Map<String, dynamic> toMap() {
+    return {
+      'type': type,
+      'date': date.toIso8601String(),
+      'medicineName': medicineName,
+      'effectiveness': effectiveness,
+    };
+  }
+
+  factory MedicationActionLog.fromMap(Map<String, dynamic> map) {
+    return MedicationActionLog(
+      date: DateTime.parse(map['date']),
+      medicineName: map['medicineName'],
+      effectiveness: map['effectiveness'],
+    );
+  }
 }
 
 // =========================================================================
-// APLIKASI UTAMA
+// APLIKASI UTAMA & NAVIGASI
 // =========================================================================
 class MigraineTrackerApp extends StatelessWidget {
   const MigraineTrackerApp({super.key});
@@ -56,9 +96,6 @@ class MigraineTrackerApp extends StatelessWidget {
   }
 }
 
-// =========================================================================
-// 2. NAVIGASI UTAMA (Kembali ke 2 Tab, tapi Fitur Obat dilempar via Pop-up)
-// =========================================================================
 class MainNavigationScreen extends StatefulWidget {
   const MainNavigationScreen({super.key});
 
@@ -68,16 +105,50 @@ class MainNavigationScreen extends StatefulWidget {
 
 class _MainNavigationScreenState extends State<MainNavigationScreen> {
   int _currentIndex = 0;
-
-  // SATU LIST UNTUK SEMUA: Menampung riwayat sakit DAN riwayat obat sekaligus
   final List<BaseLog> _unifiedHistoryLogs = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _loadDataFromStorage(); // NEW: Ambil data lama pas aplikasi pertama kali dibuka
+  }
+
+  // 💾 NEW: Fungsi mengambil data dari memori HP
+  Future<void> _loadDataFromStorage() async {
+    final prefs = await SharedPreferences.getInstance();
+    final String? encodedData = prefs.getString('migraine_logs');
+
+    if (encodedData != null) {
+      final List<dynamic> decodedList = jsonDecode(encodedData);
+      setState(() {
+        _unifiedHistoryLogs.clear();
+        for (var item in decodedList) {
+          if (item['type'] == 'migraine') {
+            _unifiedHistoryLogs.add(MigraineLog.fromMap(item));
+          } else if (item['type'] == 'medication') {
+            _unifiedHistoryLogs.add(MedicationActionLog.fromMap(item));
+          }
+        }
+        _unifiedHistoryLogs.sort((a, b) => b.date.compareTo(a.date));
+      });
+    }
+  }
+
+  // 💾 NEW: Fungsi menyimpan data ke memori HP
+  Future<void> _saveDataToStorage() async {
+    final prefs = await SharedPreferences.getInstance();
+    final List<Map<String, dynamic>> mapList = _unifiedHistoryLogs
+        .map((log) => log.toMap())
+        .toList();
+    await prefs.setString('migraine_logs', jsonEncode(mapList));
+  }
 
   void _addNewLog(BaseLog newLog) {
     setState(() {
       _unifiedHistoryLogs.add(newLog);
-      // Diurutkan berdasarkan tanggal terbaru di paling atas
       _unifiedHistoryLogs.sort((a, b) => b.date.compareTo(a.date));
     });
+    _saveDataToStorage(); // Simpan setiap ada data baru
   }
 
   @override
@@ -93,11 +164,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
         currentIndex: _currentIndex,
         selectedItemColor: Colors.indigo,
         unselectedItemColor: Colors.grey,
-        onTap: (index) {
-          setState(() {
-            _currentIndex = index;
-          });
-        },
+        onTap: (index) => setState(() => _currentIndex = index),
         items: const [
           BottomNavigationBarItem(
             icon: Icon(Icons.edit_note),
@@ -114,7 +181,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
 }
 
 // =========================================================================
-// 3. HALAMAN CATAT BARU (Bisa Catat Sakit ATAU Klik Tombol Obat)
+// HALAMAN INPUT (Sakit & Obat)
 // =========================================================================
 class MigraineLogScreen extends StatefulWidget {
   final Function(MigraineLog) onLogSaved;
@@ -141,17 +208,19 @@ class _MigraineLogScreenState extends State<MigraineLogScreen> {
     'Stres',
     'Cuaca Panas',
     'Makanan/MSG',
+    'Asam Lambung',
     'Hormonal/Haid',
   ];
 
-  // Data untuk Form Obat
   final _formKey = GlobalKey<FormState>();
   String _selectedMedicine = 'Paracetamol';
   String _effectiveness = 'Manjur (Sembuh Total)';
   final List<String> _medicines = [
     'Paracetamol',
     'Ibuprofen',
-    'Sumatriptan',
+    'Bodrex Migrain',
+    'Promag',
+    'Lagesil',
     'Asam Mefenamat',
     'Lainnya',
   ];
@@ -168,15 +237,12 @@ class _MigraineLogScreenState extends State<MigraineLogScreen> {
       trigger: _selectedTrigger,
       note: _noteController.text,
     );
-
     widget.onLogSaved(logBaru);
-
     setState(() {
       _painScale = 5.0;
       _selectedTrigger = 'Kurang Tidur';
       _noteController.clear();
     });
-
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('Log migrain berhasil disimpan! 🧠')),
     );
@@ -189,14 +255,10 @@ class _MigraineLogScreenState extends State<MigraineLogScreen> {
         medicineName: _selectedMedicine,
         effectiveness: _effectiveness,
       );
-
       widget.onMedicationSaved(obatBaru);
       Navigator.pop(context);
-
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Aksi minum obat berhasil disisipkan ke riwayat! 💊'),
-        ),
+        const SnackBar(content: Text('Aksi minum obat berhasil disimpan! 💊')),
       );
     }
   }
@@ -211,7 +273,6 @@ class _MigraineLogScreenState extends State<MigraineLogScreen> {
         ),
         backgroundColor: Colors.indigo,
         actions: [
-          // Tombol cepat di pojok kanan atas untuk catat obat kapan saja
           TextButton.icon(
             onPressed: () => _openAddActionForm(context),
             icon: const Icon(Icons.medication, color: Colors.white),
@@ -230,7 +291,6 @@ class _MigraineLogScreenState extends State<MigraineLogScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Tombol shortcut besar biar istri gampang klik kalau darurat habis minum obat
             Card(
               color: Colors.indigo.shade50,
               child: ListTile(
@@ -244,7 +304,7 @@ class _MigraineLogScreenState extends State<MigraineLogScreen> {
                   style: TextStyle(fontWeight: FontWeight.bold),
                 ),
                 subtitle: const Text(
-                  'Klik di sini untuk langsung mencatat efektivitas obat.',
+                  'Klik di sini untuk mencatat efektivitas obat.',
                 ),
                 trailing: const Icon(Icons.arrow_forward_ios, size: 16),
                 onTap: () => _openAddActionForm(context),
@@ -394,7 +454,7 @@ class _MigraineLogScreenState extends State<MigraineLogScreen> {
 }
 
 // =========================================================================
-// 4. HALAMAN RIWAYAT SATU LINIMASA (TERURUT BERDASARKAN WAKTU)
+// HALAMAN RIWAYAT SATU LINIMASA
 // =========================================================================
 class UnifiedHistoryScreen extends StatelessWidget {
   final List<BaseLog> logs;
@@ -426,14 +486,12 @@ class UnifiedHistoryScreen extends StatelessWidget {
                   'HH:mm - dd MMM yyyy',
                 ).format(currentLog.date);
 
-                // JIKA LOG ADALAH CATATAN SAKIT MIGRAIN
                 if (currentLog is MigraineLog) {
                   return Card(
                     margin: const EdgeInsets.symmetric(
                       horizontal: 12,
                       vertical: 6,
                     ),
-                    borderOnForeground: true,
                     child: ListTile(
                       leading: CircleAvatar(
                         backgroundColor: Colors.red.shade400,
@@ -464,7 +522,6 @@ class UnifiedHistoryScreen extends StatelessWidget {
                   );
                 }
 
-                // JIKA LOG ADALAH CATATAN MINUM OBAT
                 if (currentLog is MedicationActionLog) {
                   Color statusColor = Colors.grey;
                   if (currentLog.effectiveness == 'Manjur (Sembuh Total)')
@@ -475,9 +532,7 @@ class UnifiedHistoryScreen extends StatelessWidget {
                     statusColor = Colors.red.shade600;
 
                   return Card(
-                    color: Colors
-                        .green
-                        .shade50, // Dibikin beda warna background biar eye-catching
+                    color: Colors.green.shade50,
                     margin: const EdgeInsets.symmetric(
                       horizontal: 12,
                       vertical: 6,
@@ -518,7 +573,6 @@ class UnifiedHistoryScreen extends StatelessWidget {
                     ),
                   );
                 }
-
                 return const SizedBox.shrink();
               },
             ),
