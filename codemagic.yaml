@@ -1,0 +1,28 @@
+publishing:
+  email:
+    recipients:
+      - afian799@gmail.com # Ganti pakai emailmu biar dikirimi file aplikasinya
+
+workflows:
+  ios-workflow:
+    name: iOS Build Workflow
+    max_build_duration: 30
+    instance_type: mac_mini_m1
+    environment:
+      flutter: stable
+      xcode: latest
+    triggering:
+      events:
+        - push
+    scripts:
+      - name: Force Create iOS Project Shell
+        script: | 
+          flutter create --platforms=ios .
+      - name: Get Flutter packages
+        script: |
+          flutter pub get
+      - name: Flutter build iOS
+        script: |
+          flutter build ios --release --no-codesign
+    artifacts:
+      - build/ios/iphoneos/*.app
